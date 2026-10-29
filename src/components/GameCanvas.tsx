@@ -145,7 +145,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       doorConfig: o.doorConfig ? { ...o.doorConfig } : undefined,
       movingConfig: o.movingConfig ? { ...o.movingConfig } : undefined,
       portalConfig: o.portalConfig ? { ...o.portalConfig } : undefined,
-      ropeConfig: o.ropeConfig ? { ...o.ropeConfig } : undefined
+      ropeConfig: o.ropeConfig ? { ...o.ropeConfig } : undefined,
+      rollingConfig: o.rollingConfig ? { ...o.rollingConfig } : undefined,
+      fallingConfig: o.fallingConfig ? { ...o.fallingConfig } : undefined,
+      trapdoorConfig: o.trapdoorConfig ? { ...o.trapdoorConfig } : undefined,
+      crateConfig: o.crateConfig ? { ...o.crateConfig } : undefined,
+      plankConfig: o.plankConfig ? { ...o.plankConfig } : undefined,
+      trapConfig: o.trapConfig ? { ...o.trapConfig } : undefined
     }));
 
     aimAngleRef.current = level.playerAimHintAngle ?? -0.5;
@@ -1017,16 +1023,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   const renderObstacle = (ctx: CanvasRenderingContext2D, obs: Obstacle) => {
     ctx.save();
+    const cx = obs.x + obs.width / 2;
+    const cy = obs.y + obs.height / 2;
+    const ink = '#0F1216';
 
-    if (obs.type === 'wall' || obs.type === 'moving_platform') {
-      ctx.fillStyle = obs.color || '#374151';
-      ctx.strokeStyle = '#0F1216';
+    // Shared helpers keep every new obstacle in the same comic-book style.
+    const drawLabel = (label: string, x = cx, y = obs.y - 8, color = '#F8FAFC') => {
+      ctx.save();
+      ctx.font = '900 10px "Arial Black", Impact, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
       ctx.lineWidth = 3;
+      ctx.strokeStyle = ink;
+      ctx.strokeText(label, x, y);
+      ctx.fillStyle = color;
+      ctx.fillText(label, x, y);
+      ctx.restore();
+    };
+    const drawBox = (fill: string, stroke = ink, lineWidth = 3) => {
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lineWidth;
       ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
       ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
+    };
 
-      // Comic hatch lines
-      ctx.strokeStyle = 'rgba(15, 18, 22, 0.4)';
+    if (obs.type === 'wall' || obs.type === 'moving_platform' || obs.type === 'support_pillar') {
+      const fill = obs.color || (obs.type === 'support_pillar' ? '#64748B' : '#374151');
+      drawBox(fill);
+      ctx.strokeStyle = 'rgba(15, 18, 22, 0.45)';
       ctx.lineWidth = 1.5;
       for (let y = obs.y + 10; y < obs.y + obs.height; y += 20) {
         ctx.beginPath();
@@ -1034,86 +1059,85 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.lineTo(obs.x + obs.width - 4, y - 6);
         ctx.stroke();
       }
+      if (obs.type === 'moving_platform') drawLabel('MOBILE', cx, obs.y - 7, '#93C5FD');
+      if (obs.type === 'support_pillar') drawLabel('SUPPORT', cx, obs.y - 7, '#CBD5E1');
     } else if (obs.type === 'destructible') {
-      ctx.fillStyle = obs.color || '#9C683B';
-      ctx.strokeStyle = '#0F1216';
+      drawBox(obs.color || '#9C683B');
+      ctx.strokeStyle = '#3B2418';
       ctx.lineWidth = 3;
-      ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
-      ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
-
-      // Wood cross
       ctx.beginPath();
       ctx.moveTo(obs.x + 4, obs.y + 4);
       ctx.lineTo(obs.x + obs.width - 4, obs.y + obs.height - 4);
       ctx.moveTo(obs.x + obs.width - 4, obs.y + 4);
       ctx.lineTo(obs.x + 4, obs.y + obs.height - 4);
       ctx.stroke();
+      if (obs.health !== undefined && obs.maxHealth && obs.health < obs.maxHealth) {
+        ctx.fillStyle = '#111827';
+        ctx.fillRect(obs.x, obs.y - 6, obs.width, 4);
+        ctx.fillStyle = '#F97316';
+        ctx.fillRect(obs.x, obs.y - 6, obs.width * Math.max(0, obs.health / obs.maxHealth), 4);
+      }
     } else if (obs.type === 'explosive_barrel') {
       ctx.fillStyle = '#993026';
-      ctx.strokeStyle = '#0F1216';
+      ctx.strokeStyle = ink;
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.roundRect(obs.x, obs.y, obs.width, obs.height, 5);
       ctx.fill();
       ctx.stroke();
-
-      // Yellow caution stencil
       ctx.fillStyle = '#EAB308';
       ctx.fillRect(obs.x + 2, obs.y + 10, obs.width - 4, 6);
       ctx.fillRect(obs.x + 2, obs.y + obs.height - 16, obs.width - 4, 6);
-
       ctx.fillStyle = '#F8FAFC';
       ctx.font = '900 12px "Impact", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('TNT', obs.x + obs.width / 2, obs.y + obs.height / 2);
+      ctx.fillText('TNT', cx, cy);
+      if (obs.explosionRadius) drawLabel(`R ${obs.explosionRadius}`, cx, obs.y - 8, '#FCA5A5');
     } else if (obs.type === 'portal') {
-      // Swirling comic vortex portal
-      ctx.strokeStyle = obs.color || '#3B82F6';
+      const portalColor = obs.color || '#3B82F6';
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+      ctx.strokeStyle = portalColor;
       ctx.lineWidth = 4;
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
       ctx.beginPath();
-      ctx.ellipse(obs.x + obs.width / 2, obs.y + obs.height / 2, obs.width / 2, obs.height / 2, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy, obs.width / 2, obs.height / 2, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-
-      // Inner spiral ring
       ctx.strokeStyle = '#FFFFFF';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.ellipse(obs.x + obs.width / 2, obs.y + obs.height / 2, obs.width / 4, obs.height / 4, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy, obs.width / 3, obs.height / 3, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = portalColor;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, obs.width / 6, obs.height / 5, 0.5, 0, Math.PI * 2);
       ctx.stroke();
     } else if (obs.type === 'glass') {
-      // Translucent light blue pane with comic reflection highlights
       ctx.fillStyle = 'rgba(125, 211, 252, 0.25)';
       ctx.strokeStyle = '#38BDF8';
       ctx.lineWidth = 2;
       ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
       ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
-
-      // Angled glint line
       ctx.strokeStyle = '#FFFFFF';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(obs.x + 2, obs.y + 20);
-      ctx.lineTo(obs.x + obs.width - 2, obs.y + 60);
+      ctx.moveTo(obs.x + 2, obs.y + 5);
+      ctx.lineTo(obs.x + obs.width - 2, obs.y + obs.height - 5);
+      ctx.moveTo(obs.x + obs.width * 0.65, obs.y + 3);
+      ctx.lineTo(obs.x + obs.width - 3, obs.y + obs.height * 0.45);
       ctx.stroke();
     } else if (obs.type === 'bouncer') {
-      // Rubber spring bumper with squash animation
       const squash = obs.bouncerSquash || 0;
       ctx.save();
-      ctx.translate(obs.x + obs.width / 2, obs.y + obs.height / 2);
+      ctx.translate(cx, cy);
       ctx.scale(1 + squash * 0.3, 1 - squash * 0.3);
-
       ctx.fillStyle = '#7C3AED';
-      ctx.strokeStyle = '#0F1216';
+      ctx.strokeStyle = ink;
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.roundRect(-obs.width / 2, -obs.height / 2, obs.width, obs.height, 8);
       ctx.fill();
       ctx.stroke();
-
-      // Spring zigzag stripes
       ctx.strokeStyle = '#DDD6FE';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
@@ -1122,33 +1146,38 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.lineTo(-obs.width / 3, obs.height / 3);
       ctx.stroke();
       ctx.restore();
-    } else if (obs.type === 'hazard_spikes') {
-      // Metal sharp spikes
-      ctx.fillStyle = '#64748B';
-      ctx.strokeStyle = '#0F1216';
+    } else if (obs.type === 'hazard_spikes' || obs.type === 'trap_spikes') {
+      const active = obs.type === 'hazard_spikes' || !!(obs.trapConfig?.activated || obs.isTriggered);
+      const spikeW = Math.max(10, Math.min(16, obs.width / 8));
+      const count = Math.max(1, Math.floor(obs.width / spikeW));
+      ctx.fillStyle = active ? '#94A3B8' : '#475569';
+      ctx.strokeStyle = ink;
       ctx.lineWidth = 2;
-      const spikeW = 14;
-      const count = Math.floor(obs.width / spikeW);
-      for (let i = 0; i < count; i++) {
-        const sx = obs.x + i * spikeW;
-        ctx.beginPath();
-        ctx.moveTo(sx, obs.y + obs.height);
-        ctx.lineTo(sx + spikeW / 2, obs.y);
-        ctx.lineTo(sx + spikeW, obs.y + obs.height);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
+      if (active) {
+        for (let i = 0; i < count; i++) {
+          const sx = obs.x + i * (obs.width / count);
+          const sw = obs.width / count;
+          ctx.beginPath();
+          ctx.moveTo(sx, obs.y + obs.height);
+          ctx.lineTo(sx + sw / 2, obs.y);
+          ctx.lineTo(sx + sw, obs.y + obs.height);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        }
+      } else {
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(obs.x, obs.y + obs.height * 0.55, obs.width, obs.height * 0.45);
+        ctx.strokeRect(obs.x, obs.y + obs.height * 0.55, obs.width, obs.height * 0.45);
+        drawLabel('PIÈGES RENTRÉS', cx, cy, '#CBD5E1');
       }
     } else if (obs.type === 'rope_weight' && obs.ropeConfig) {
       const rope = obs.ropeConfig;
-      // Anchor bracket
       ctx.fillStyle = '#1E293B';
-      ctx.strokeStyle = '#0F1216';
+      ctx.strokeStyle = ink;
       ctx.lineWidth = 3;
       ctx.fillRect(rope.anchorX - 10, rope.anchorY - 8, 20, 10);
       ctx.strokeRect(rope.anchorX - 10, rope.anchorY - 8, 20, 10);
-
-      // Rope strand (if intact)
       if (!rope.isCut) {
         ctx.strokeStyle = '#D97706';
         ctx.lineWidth = 4;
@@ -1159,48 +1188,282 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.stroke();
         ctx.setLineDash([]);
       }
-
-      // Heavy Iron Wrecking Ball
       ctx.fillStyle = '#334155';
-      ctx.strokeStyle = '#0F1216';
+      ctx.strokeStyle = ink;
       ctx.lineWidth = 3.5;
       ctx.beginPath();
       ctx.arc(rope.ballX, rope.ballY, rope.ballRadius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-
-      // Comic metallic rim highlight
       ctx.strokeStyle = '#94A3B8';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(rope.ballX - 6, rope.ballY - 6, rope.ballRadius * 0.6, Math.PI * 0.8, Math.PI * 1.6);
       ctx.stroke();
-    } else if (obs.type === 'switch') {
-      ctx.fillStyle = obs.isTriggered ? '#22C55E' : '#D4A325';
-      ctx.strokeStyle = '#0F1216';
-      ctx.lineWidth = 3;
+    } else if (obs.type === 'rolling_boulder') {
+      const cfg = obs.rollingConfig;
+      const radius = cfg?.radius || Math.min(obs.width, obs.height) / 2;
+      const bx = cfg ? obs.x + obs.width / 2 : cx;
+      const by = cfg ? obs.y + obs.height / 2 : cy;
+      ctx.save();
+      ctx.translate(bx, by);
+      ctx.rotate(cfg?.rotation || 0);
+      ctx.fillStyle = '#64748B';
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.arc(obs.x + obs.width / 2, obs.y + obs.height / 2, obs.width / 2 - 2, 0, Math.PI * 2);
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-
-      ctx.fillStyle = '#0F1216';
+      ctx.strokeStyle = '#CBD5E1';
+      ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(obs.x + obs.width / 2, obs.y + obs.height / 2, 7, 0, Math.PI * 2);
+      ctx.moveTo(-radius * 0.65, 0);
+      ctx.lineTo(radius * 0.65, 0);
+      ctx.moveTo(0, -radius * 0.65);
+      ctx.lineTo(0, radius * 0.65);
+      ctx.stroke();
+      ctx.restore();
+      drawLabel('ROCHER', cx, obs.y - 7, '#CBD5E1');
+    } else if (obs.type === 'falling_weight') {
+      const cfg = obs.fallingConfig;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(cfg && cfg.isFalling ? Math.atan2(cfg.vy, cfg.vx || 0.001) * 0.08 : 0);
+      ctx.fillStyle = '#475569';
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 3;
+      ctx.fillRect(-obs.width / 2, -obs.height / 2, obs.width, obs.height);
+      ctx.strokeRect(-obs.width / 2, -obs.height / 2, obs.width, obs.height);
+      ctx.strokeStyle = '#CBD5E1';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-obs.width / 2 + 5, 0);
+      ctx.lineTo(obs.width / 2 - 5, 0);
+      ctx.moveTo(0, -obs.height / 2 + 5);
+      ctx.lineTo(0, obs.height / 2 - 5);
+      ctx.stroke();
+      ctx.restore();
+      drawLabel(cfg?.isFalling ? 'CHUTE !' : 'POIDS', cx, obs.y - 7, cfg?.isFalling ? '#FCA5A5' : '#CBD5E1');
+    } else if (obs.type === 'wedge') {
+      ctx.fillStyle = obs.color || '#B45309';
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(obs.x, obs.y + obs.height);
+      ctx.lineTo(obs.x + obs.width, obs.y + obs.height);
+      ctx.lineTo(obs.x + obs.width, obs.y);
+      ctx.closePath();
       ctx.fill();
-    } else if (obs.type === 'door') {
-      ctx.fillStyle = '#3F444C';
-      ctx.strokeStyle = '#0F1216';
-      ctx.lineWidth = 3.5;
-      ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
-      ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
-
-      ctx.fillStyle = '#F59E0B';
-      for (let y = obs.y + 6; y < obs.y + obs.height - 10; y += 22) {
-        ctx.fillRect(obs.x + 4, y, obs.width - 8, 6);
+      ctx.stroke();
+      ctx.strokeStyle = '#FCD34D';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(obs.x + 5, obs.y + obs.height - 4);
+      ctx.lineTo(obs.x + obs.width - 4, obs.y + 5);
+      ctx.stroke();
+      drawLabel('CALE', cx, obs.y - 7, '#FCD34D');
+    } else if (obs.type === 'trapdoor') {
+      const cfg = obs.trapdoorConfig;
+      const px = cfg?.pivotX ?? obs.x;
+      const py = cfg?.pivotY ?? obs.y;
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(cfg?.angle || 0);
+      ctx.fillStyle = cfg?.isOpen ? '#92400E' : '#78716C';
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 4;
+      ctx.fillRect(0, -Math.max(6, obs.height / 2), obs.width, Math.max(8, obs.height));
+      ctx.strokeRect(0, -Math.max(6, obs.height / 2), obs.width, Math.max(8, obs.height));
+      ctx.strokeStyle = '#D6D3D1';
+      ctx.lineWidth = 2;
+      for (let x = 8; x < obs.width; x += 18) {
+        ctx.beginPath();
+        ctx.moveTo(x, -obs.height / 2 + 2);
+        ctx.lineTo(x, obs.height / 2 - 2);
+        ctx.stroke();
       }
+      ctx.restore();
+      if (cfg?.isOpen) drawLabel('OUVERTE', px + obs.width / 2, py - 15, '#FCD34D');
+    } else if (obs.type === 'pushable_crate' || obs.type === 'domino') {
+      const isDomino = obs.type === 'domino';
+      ctx.save();
+      if (isDomino) {
+        ctx.translate(cx, cy);
+        ctx.rotate(obs.plankConfig?.angle || 0);
+        ctx.fillStyle = obs.color || '#A16207';
+        ctx.strokeStyle = ink;
+        ctx.lineWidth = 3;
+        ctx.fillRect(-obs.width / 2, -obs.height / 2, obs.width, obs.height);
+        ctx.strokeRect(-obs.width / 2, -obs.height / 2, obs.width, obs.height);
+        ctx.strokeStyle = '#FDE68A';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-obs.width / 2 + 5, -obs.height / 2 + 5);
+        ctx.lineTo(obs.width / 2 - 5, obs.height / 2 - 5);
+        ctx.stroke();
+      } else {
+        drawBox(obs.color || '#A16207');
+        ctx.strokeStyle = '#FDE68A';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(obs.x + 4, obs.y + 4);
+        ctx.lineTo(obs.x + obs.width - 4, obs.y + obs.height - 4);
+        ctx.moveTo(obs.x + obs.width - 4, obs.y + 4);
+        ctx.lineTo(obs.x + 4, obs.y + obs.height - 4);
+        ctx.stroke();
+        drawLabel(`MASSE ${obs.crateConfig?.mass ?? obs.mass ?? 1}`, cx, cy, '#FEF3C7');
+      }
+      ctx.restore();
+    } else if (obs.type === 'plank') {
+      const cfg = obs.plankConfig;
+      const angle = cfg?.angle || 0;
+      ctx.save();
+      const pivotX = cfg?.pivotX ?? obs.x;
+      const pivotY = cfg?.pivotY ?? obs.y + obs.height / 2;
+      ctx.translate(pivotX, pivotY);
+      ctx.rotate(angle);
+      ctx.fillStyle = obs.color || '#9A633A';
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 3;
+      ctx.fillRect(0, -obs.height / 2, obs.width, obs.height);
+      ctx.strokeRect(0, -obs.height / 2, obs.width, obs.height);
+      ctx.strokeStyle = '#E7B98A';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(5, -obs.height / 2 + 4);
+      ctx.lineTo(obs.width - 5, -obs.height / 2 + 4);
+      ctx.moveTo(5, obs.height / 2 - 4);
+      ctx.lineTo(obs.width - 5, obs.height / 2 - 4);
+      ctx.stroke();
+      ctx.fillStyle = '#64748B';
+      for (const nx of [10, obs.width - 10]) {
+        ctx.beginPath();
+        ctx.arc(nx, 0, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+      drawLabel(cfg?.activated ? 'PIVOT' : 'PLANCHE', cx, obs.y - 7, '#FDE68A');
+    } else if (obs.type === 'pressure_plate') {
+      const active = !!(obs.trapConfig?.activated || obs.isTriggered);
+      ctx.fillStyle = active ? '#22C55E' : '#D97706';
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(obs.x, active ? obs.y + obs.height * 0.35 : obs.y, obs.width, active ? obs.height * 0.65 : obs.height, 3);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = active ? '#BBF7D0' : '#FDE68A';
+      ctx.fillRect(obs.x + 4, obs.y + 3, Math.max(0, obs.width - 8), 3);
+      drawLabel(active ? 'ACTIVÉE' : 'PRESSION', cx, obs.y - 8, active ? '#86EFAC' : '#FDE68A');
+      if (obs.trapConfig?.linkedTrapId) {
+        ctx.strokeStyle = active ? '#22C55E' : 'rgba(234,179,8,0.55)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(cx, obs.y + obs.height);
+        ctx.lineTo(cx, Math.min(CANVAS_HEIGHT - 24, obs.y + obs.height + 22));
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    } else if (obs.type === 'laser') {
+      const active = obs.isTriggered !== false;
+      const laserColor = active ? '#F43F5E' : '#64748B';
+      ctx.fillStyle = '#334155';
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 2;
+      ctx.fillRect(obs.x - 5, cy - 7, 10, 14);
+      ctx.strokeRect(obs.x - 5, cy - 7, 10, 14);
+      ctx.fillRect(obs.x + obs.width - 5, cy - 7, 10, 14);
+      ctx.strokeRect(obs.x + obs.width - 5, cy - 7, 10, 14);
+      if (active) {
+        ctx.save();
+        ctx.shadowColor = laserColor;
+        ctx.shadowBlur = 12;
+        ctx.strokeStyle = laserColor;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(obs.x, cy);
+        ctx.lineTo(obs.x + obs.width, cy + obs.height);
+        ctx.stroke();
+        ctx.restore();
+        ctx.strokeStyle = 'rgba(251, 113, 133, 0.35)';
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.moveTo(obs.x, cy);
+        ctx.lineTo(obs.x + obs.width, cy + obs.height);
+        ctx.stroke();
+      }
+      drawLabel(active ? 'LASER' : 'LASER OFF', cx, obs.y - 8, active ? '#FDA4AF' : '#CBD5E1');
+    } else if (obs.type === 'mirror') {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(obs.plankConfig?.angle || -Math.PI / 4);
+      ctx.fillStyle = '#64748B';
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 3;
+      ctx.fillRect(-obs.width / 2, -Math.max(3, obs.height / 2), obs.width, Math.max(6, obs.height));
+      ctx.strokeRect(-obs.width / 2, -Math.max(3, obs.height / 2), obs.width, Math.max(6, obs.height));
+      ctx.strokeStyle = '#E0F2FE';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-obs.width / 2 + 3, -1);
+      ctx.lineTo(obs.width / 2 - 3, -1);
+      ctx.stroke();
+      ctx.restore();
+      drawLabel('MIROIR', cx, obs.y - 8, '#BAE6FD');
+    } else if (obs.type === 'timed_trap') {
+      const pending = !!(obs.trapConfig?.pending || obs.trapConfig?.activated || obs.isTriggered);
+      const progress = obs.trapConfig?.activationDelay
+        ? Math.min(1, (obs.trapConfig.elapsed || 0) / obs.trapConfig.activationDelay)
+        : (pending ? 1 : 0);
+      ctx.fillStyle = pending ? '#B91C1C' : '#475569';
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(obs.x, obs.y, obs.width, obs.height, 4);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#111827';
+      ctx.fillRect(obs.x + 4, obs.y + obs.height / 2 - 3, obs.width - 8, 6);
+      ctx.fillStyle = '#FCA5A5';
+      ctx.fillRect(obs.x + 4, obs.y + obs.height / 2 - 3, (obs.width - 8) * progress, 6);
+      drawLabel(pending ? 'DANGER' : 'TEMPORISÉ', cx, obs.y - 8, pending ? '#FCA5A5' : '#CBD5E1');
+    } else if (obs.type === 'switch') {
+      ctx.fillStyle = obs.isTriggered ? '#22C55E' : '#D4A325';
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, Math.max(3, obs.width / 2 - 2), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = ink;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+      ctx.fill();
+      drawLabel(obs.isTriggered ? 'ON' : 'SWITCH', cx, obs.y - 8, obs.isTriggered ? '#86EFAC' : '#FDE68A');
+    } else if (obs.type === 'door') {
+      if (obs.height > 0) {
+        drawBox(obs.doorConfig?.isOpen ? '#57534E' : '#3F444C', ink, 3.5);
+        ctx.fillStyle = '#F59E0B';
+        for (let y = obs.y + 6; y < obs.y + obs.height - 10; y += 22) {
+          ctx.fillRect(obs.x + 4, y, Math.max(0, obs.width - 8), 6);
+        }
+      }
+      if (obs.doorConfig?.isOpen) drawLabel('OUVERTE', cx, obs.y - 8, '#86EFAC');
+    } else {
+      // Safe fallback for any future obstacle type: never silently render it invisible.
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = obs.color || '#F472B6';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
+      ctx.setLineDash([]);
+      drawLabel(obs.label || obs.type.toUpperCase(), cx, cy, '#F9A8D4');
     }
 
+    if (obs.label && !['wall', 'moving_platform', 'support_pillar'].includes(obs.type)) {
+      drawLabel(obs.label, cx, obs.y + obs.height + 10, '#E2E8F0');
+    }
     ctx.restore();
   };
 
