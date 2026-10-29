@@ -1,0 +1,6 @@
+{
+  "name": "Ricochet Ragdoll: 4s Puzzle",
+  "description": "Jeu de puzzle 2D et physique ragdoll avec ricochet de balle en 4 secondes chrono et GDD technique complet.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
