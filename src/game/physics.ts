@@ -188,8 +188,12 @@ export function updateRagdoll(
 
         if (dist < p.radius) {
           // If hazard spikes: instantly eliminate living ragdoll!
-          if (obs.type === 'hazard_spikes' && ragdoll.isAlive) {
-            applyImpulseToRagdoll(ragdoll, p.x, p.y, (Math.random() - 0.5) * 800, -900);
+          const obstacleType = (obs as any).type as string;
+          const trapConfig = (obs as any).trapConfig;
+          const activeTrap = obstacleType === 'trap_spikes' && trapConfig?.activated === true;
+          if ((obstacleType === 'hazard_spikes' || activeTrap) && ragdoll.isAlive) {
+            // Deterministic impulse: puzzle outcomes should not depend on randomness.
+            applyImpulseToRagdoll(ragdoll, p.x, p.y, 0, -900);
           }
 
           if (dist === 0) {
@@ -300,7 +304,7 @@ export function updatePuzzleMechanisms(
                 part.y >= obs.y &&
                 part.y <= obs.y + obs.height + part.radius
               ) {
-                applyImpulseToRagdoll(rag, part.x, part.y, (Math.random() - 0.5) * 300, 400, pIdx);
+                applyImpulseToRagdoll(rag, part.x, part.y, 0, 400, pIdx);
                 onCrushRagdoll(rag, part.x, part.y, "APLATI !");
                 break;
               }
@@ -325,6 +329,307 @@ export function updatePuzzleMechanisms(
       }
     }
   }
+
+  // Additional deterministic puzzle mechanics: planks, crates, pressure plates,
+  // timed traps and chain reactions. These use optional fields so older Obstacle
+  // definitions remain compatible while types.ts is being extended.
+  updateInteractivePuzzleMechanisms(obstacles, dt, ragdolls, canvasHeight, onCrushRagdoll);
+}
+
+/**
+ * Runs the new puzzle objects using optional configuration fields.
+ * Call updatePuzzleMechanisms once per frame (as the game already does).
+ *
+ * Supported optional configs:
+ * plankConfig: { pivotX, pivotY, angle, angularVelocity, canRotate, gravityEnabled,
+ *               linkedSupportId, activated }
+ * crateConfig: { vx, vy, mass, isResting }
+ * trapConfig:  { linkedTrapId, activated, requiresWeight, activationDelay, elapsed }
+ */
+function updateInteractivePuzzleMechanisms(
+  obstacles: Obstacle[],
+  dt: number,
+  ragdolls: Ragdoll[],
+  canvasHeight: number,
+  onCrushRagdoll: (ragdoll: Ragdoll, x: number, y: number, text: string) => void
+) {
+  const floorY = canvasHeight - 20;
+  const extra = (o: Obstacle): any => o as any;
+  const overlaps = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) =>
+    a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+
+  // 1. Pushable crates: deterministic gravity and basic horizontal motion.
+  for (const obs of obstacles) {
+    const o = extra(obs);
+    if (o.isDestroyed || o.type !== 'pushable_crate') continue;
+    const cfg = o.crateConfig || (o.crateConfig = { vx: 0, vy: 0, mass: o.mass || 3, isResting: false });
+    cfg.vy = (cfg.vy || 0) + GRAVITY * dt;
+    o.x += (cfg.vx || 0) * dt;
+    o.y += cfg.vy * dt;
+    cfg.vx = (cfg.vx || 0) * Math.pow(0.94, dt * 60);
+
+    // Crates collide with solid obstacles and stop on the floor.
+    if (o.y + o.height >= floorY) {
+      o.y = floorY - o.height;
+      cfg.vy = 0;
+      cfg.isResting = true;
+    } else {
+      cfg.isResting = false;
+    }
+    for (const other of obstacles) {
+      const q = extra(other);
+      if (other.id === obs.id || q.isDestroyed || q.type === 'portal' || q.type === 'pushable_crate' || q.type === 'trap_spikes' || q.type === 'pressure_plate') continue;
+      if (q.type === 'door' && q.doorConfig?.isOpen && q.height <= 0) continue;
+      if (!overlaps(o, other)) continue;
+      const previousBottom = o.y + o.height - cfg.vy * dt;
+      if (cfg.vy >= 0 && previousBottom <= other.y + 8) {
+        o.y = other.y - o.height;
+        cfg.vy = 0;
+        cfg.isResting = true;
+      } else if (o.x + o.width / 2 < other.x + other.width / 2) {
+        o.x = other.x - o.width;
+        cfg.vx = 0;
+      } else {
+        o.x = other.x + other.width;
+        cfg.vx = 0;
+      }
+    }
+    // A moving crate transfers a small, deterministic push to another crate.
+    for (const other of obstacles) {
+      const q = extra(other);
+      if (other.id === obs.id || q.isDestroyed || q.type !== 'pushable_crate' || !overlaps(o, other)) continue;
+      const direction = (cfg.vx || 0) >= 0 ? 1 : -1;
+      const otherCfg = q.crateConfig || (q.crateConfig = { vx: 0, vy: 0, mass: q.mass || 3 });
+      otherCfg.vx = (otherCfg.vx || 0) + direction * Math.min(180, Math.abs(cfg.vx || 0) * 0.55 + 35) / Math.max(1, otherCfg.mass || 3);
+      cfg.vx = 0;
+    }
+  }
+
+  // 2. Pressure plates activate their linked traps when a crate or living ragdoll
+  // is standing on them. Once activated, the trap remains active for predictability.
+  for (const obs of obstacles) {
+    const o = extra(obs);
+    if (o.isDestroyed || o.type !== 'pressure_plate') continue;
+    const cfg = o.trapConfig || (o.trapConfig = {});
+    const plateBox = { x: o.x, y: o.y - 3, width: o.width, height: o.height + 8 };
+    let pressed = false;
+    for (const other of obstacles) {
+      const q = extra(other);
+      if (q.isDestroyed || q.type !== 'pushable_crate') continue;
+      const box = { x: q.x, y: q.y, width: q.width, height: q.height };
+      if (overlaps(plateBox, box) && q.y + q.height <= o.y + o.height + 12) { pressed = true; break; }
+    }
+    if (!pressed) {
+      for (const rag of ragdolls) {
+        if (!rag.isAlive) continue;
+        if (rag.particles.some(p => p.x >= o.x && p.x <= o.x + o.width && Math.abs((p.y + p.radius) - o.y) < 18)) {
+          pressed = true; break;
+        }
+      }
+    }
+    if (pressed) {
+      cfg.activated = true;
+      if (cfg.linkedTrapId) {
+        const linked = obstacles.find(x => x.id === cfg.linkedTrapId);
+        if (linked) {
+          const lc = extra(linked);
+          lc.trapConfig = lc.trapConfig || {};
+          lc.trapConfig.pending = true;
+          lc.trapConfig.elapsed = lc.trapConfig.elapsed || 0;
+        }
+      }
+    }
+  }
+
+  // 3. Timed traps. A linked plate starts the countdown; direct activation can
+  // also be triggered by bullet impacts through hitPuzzleObstacle().
+  for (const obs of obstacles) {
+    const o = extra(obs);
+    if (o.isDestroyed || o.type !== 'trap_spikes') continue;
+    const cfg = o.trapConfig || (o.trapConfig = {});
+    if (cfg.pending && !cfg.activated) {
+      cfg.elapsed = (cfg.elapsed || 0) + dt;
+      if (cfg.elapsed >= (cfg.activationDelay ?? 0.5)) {
+        cfg.activated = true;
+        cfg.pending = false;
+      }
+    }
+    if (!cfg.activated) continue;
+    for (const rag of ragdolls) {
+      if (!rag.isAlive) continue;
+      const hit = rag.particles.find(p => p.x + p.radius > o.x && p.x - p.radius < o.x + o.width && p.y + p.radius > o.y && p.y - p.radius < o.y + o.height);
+      if (hit) onCrushRagdoll(rag, hit.x, hit.y, 'PIÈGE ACTIVÉ !');
+    }
+  }
+
+  // 4. Planks: a support breaking or a bullet hit starts a deterministic rotation.
+  // Rendering should read plankConfig.angle to draw the plank rotated around its pivot.
+  for (const obs of obstacles) {
+    const o = extra(obs);
+    if (o.isDestroyed || o.type !== 'plank') continue;
+    const cfg = o.plankConfig || (o.plankConfig = {
+      pivotX: o.x + o.width / 2,
+      pivotY: o.y + o.height / 2,
+      angle: 0,
+      angularVelocity: 0,
+      canRotate: true,
+      gravityEnabled: true
+    });
+    if (cfg.linkedSupportId) {
+      const support = obstacles.find(x => x.id === cfg.linkedSupportId);
+      if (!support || extra(support).isDestroyed) cfg.angularVelocity = (cfg.angularVelocity || 0) + 1.8;
+    }
+    if (cfg.canRotate && (cfg.activated || Math.abs(cfg.angularVelocity || 0) > 0.01)) {
+      cfg.angularVelocity = (cfg.angularVelocity || 0) + (cfg.gravityEnabled ? 1.5 * dt : 0);
+      cfg.angle = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, (cfg.angle || 0) + cfg.angularVelocity * dt));
+      cfg.angularVelocity *= Math.pow(0.985, dt * 60);
+    }
+
+    // Approximate rotating plank as a thin segment for enemy impacts.
+    const pivotX = cfg.pivotX ?? (o.x + o.width / 2);
+    const pivotY = cfg.pivotY ?? (o.y + o.height / 2);
+    const angle = cfg.angle || 0;
+    const half = o.width / 2;
+    const ax = pivotX - Math.cos(angle) * half;
+    const ay = pivotY - Math.sin(angle) * half;
+    const bx = pivotX + Math.cos(angle) * half;
+    const by = pivotY + Math.sin(angle) * half;
+    for (const rag of ragdolls) {
+      if (!rag.isAlive) continue;
+      let crushed = false;
+      for (const part of rag.particles) {
+        const vx = bx - ax, vy = by - ay;
+        const denom = vx * vx + vy * vy || 1;
+        const t = Math.max(0, Math.min(1, ((part.x - ax) * vx + (part.y - ay) * vy) / denom));
+        const px = ax + t * vx, py = ay + t * vy;
+        if (Math.hypot(part.x - px, part.y - py) < part.radius + o.height / 2 && Math.abs(cfg.angularVelocity || 0) > 0.8) {
+          onCrushRagdoll(rag, part.x, part.y, 'ÉCRASÉ PAR LA PLANCHE !');
+          crushed = true;
+          break;
+        }
+      }
+      if (crushed) break;
+    }
+  }
+}
+
+/**
+ * Call this when a projectile collides with an obstacle.
+ * Returns true when the hit was handled by a puzzle object.
+ * Wire it into the existing bullet/obstacle collision loop.
+ */
+export function hitPuzzleObstacle(
+  hitObstacle: Obstacle,
+  hitX: number,
+  hitY: number,
+  obstacles: Obstacle[],
+  ragdolls: Ragdoll[],
+  onCrushRagdoll: (ragdoll: Ragdoll, x: number, y: number, text: string) => void
+): boolean {
+  const target = hitObstacle as any;
+  const all = obstacles.map(o => o as any);
+
+  if (target.type === 'plank') {
+    const cfg = target.plankConfig || (target.plankConfig = { pivotX: target.x + target.width / 2, pivotY: target.y + target.height / 2, angle: 0, angularVelocity: 0, canRotate: true, gravityEnabled: false });
+    if (cfg.canRotate !== false) {
+      cfg.activated = true;
+      cfg.angularVelocity = (cfg.angularVelocity || 0) + (hitX < (cfg.pivotX ?? target.x + target.width / 2) ? 2.8 : -2.8);
+    }
+    return true;
+  }
+
+  if (target.type === 'pushable_crate') {
+    const cfg = target.crateConfig || (target.crateConfig = { vx: 0, vy: 0, mass: target.mass || 3 });
+    const centerX = target.x + target.width / 2;
+    cfg.vx = (cfg.vx || 0) + (hitX <= centerX ? 260 : -260) / Math.max(1, cfg.mass || 3);
+    cfg.vy = (cfg.vy || 0) - 65;
+    return true;
+  }
+
+  if (target.type === 'pressure_plate') {
+    target.trapConfig = target.trapConfig || {};
+    target.trapConfig.activated = true;
+    if (target.trapConfig.linkedTrapId) {
+      const linked = all.find(o => o.id === target.trapConfig.linkedTrapId);
+      if (linked) {
+        linked.trapConfig = linked.trapConfig || {};
+        linked.trapConfig.pending = true;
+        linked.trapConfig.elapsed = 0;
+      }
+    }
+    return true;
+  }
+
+  if (target.type === 'trap_spikes') {
+    target.trapConfig = target.trapConfig || {};
+    target.trapConfig.pending = true;
+    target.trapConfig.elapsed = 0;
+    return true;
+  }
+
+  if (target.type === 'explosive_barrel') {
+    if (target.isDestroyed) return true;
+    target.isDestroyed = true;
+    const radius = target.explosionRadius || 145;
+    const cx = target.x + target.width / 2;
+    const cy = target.y + target.height / 2;
+    // Chain-react with nearby barrels, crates and destructible objects.
+    for (const other of all) {
+      if (other.id === target.id || other.isDestroyed) continue;
+      const ox = other.x + other.width / 2;
+      const oy = other.y + other.height / 2;
+      const dist = Math.hypot(ox - cx, oy - cy);
+      if (dist > radius) continue;
+      if (other.type === 'explosive_barrel') {
+        other.isDestroyed = true;
+        // Resolve chain reaction in the same frame by applying a radial impulse.
+        for (const rag of ragdolls) {
+          if (!rag.isAlive) continue;
+          const rp = rag.particles[1] || rag.particles[0];
+          if (Math.hypot(rp.x - ox, rp.y - oy) <= radius) onCrushRagdoll(rag, rp.x, rp.y, 'RÉACTION EN CHAÎNE !');
+        }
+      } else if (other.type === 'destructible' || other.type === 'pushable_crate') {
+        const health = typeof other.health === 'number' ? other.health : 1;
+        other.health = health - 1;
+        if (other.health <= 0) other.isDestroyed = true;
+        if (other.type === 'pushable_crate' && other.crateConfig) other.crateConfig.vx = (ox - cx) * 2;
+      }
+    }
+    for (const rag of ragdolls) {
+      if (!rag.isAlive) continue;
+      const part = rag.particles[1] || rag.particles[0];
+      const dist = Math.hypot(part.x - cx, part.y - cy);
+      if (dist <= radius) {
+        const power = Math.max(250, 900 * (1 - dist / radius));
+        onCrushRagdoll(rag, part.x, part.y, 'EXPLOSION !');
+        applyImpulseToRagdoll(rag, cx, cy, (part.x - cx || 1) * power / Math.max(1, dist), (part.y - cy || -1) * power / Math.max(1, dist), 1);
+      }
+    }
+    return true;
+  }
+
+  if (target.type === 'destructible') {
+    target.health = (typeof target.health === 'number' ? target.health : 1) - 1;
+    if (target.health <= 0) target.isDestroyed = true;
+    return true;
+  }
+
+  if (target.type === 'rope_weight' && target.ropeConfig) {
+    target.ropeConfig.isCut = true;
+    return true;
+  }
+
+  if (target.type === 'switch') {
+    target.isTriggered = true;
+    for (const other of all) {
+      if (other.type === 'door' && other.targetSwitchId === target.id && other.doorConfig) {
+        other.doorConfig.isOpen = true;
+      }
+    }
+    return true;
+  }
+
+  return false;
 }
 
 // Update pendulum rope weights
@@ -418,9 +723,7 @@ export function applyImpulseToRagdoll(
 
   for (const joint of ragdoll.joints) {
     if (joint.canBreak && impulseMag > (joint.breakThreshold || 2000)) {
-      if (Math.random() < 0.65) {
-        joint.broken = true;
-      }
+      joint.broken = true;
     }
   }
 

@@ -107,6 +107,36 @@ export interface TrapdoorConfig {
   linkedLockId?: string;
 }
 
+/** Runtime state for a crate that can be pushed by shots or other crates. */
+export interface CrateConfig {
+  vx: number;
+  vy: number;
+  mass: number;
+  isResting?: boolean;
+}
+
+/** Runtime state for a plank that can pivot after being hit or losing support. */
+export interface PlankConfig {
+  pivotX: number;
+  pivotY: number;
+  angle: number;
+  angularVelocity: number;
+  canRotate: boolean;
+  gravityEnabled?: boolean;
+  linkedSupportId?: string;
+  activated?: boolean;
+}
+
+/** Shared state for pressure plates and timed spike traps. */
+export interface TrapConfig {
+  linkedTrapId?: string;
+  activated?: boolean;
+  requiresWeight?: boolean;
+  activationDelay?: number;
+  elapsed?: number;
+  pending?: boolean;
+}
+
 export interface Obstacle {
   id: string;
   x: number;
@@ -129,12 +159,26 @@ export interface Obstacle {
     | 'wedge'
     | 'falling_weight'
     | 'support_pillar'
-    | 'trapdoor';
+    | 'trapdoor'
+    // Additional puzzle mechanics:
+    | 'pushable_crate'
+    | 'pressure_plate'
+    | 'trap_spikes'
+    | 'plank'
+    // Optional types used by some level layouts / rendering implementations:
+    | 'domino'
+    | 'laser'
+    | 'mirror'
+    | 'timed_trap';
   health?: number;
   maxHealth?: number;
   isDestroyed?: boolean;
   isTriggered?: boolean;
   color?: string;
+  /** Optional mass used by physics interactions, particularly crates. */
+  mass?: number;
+  /** Optional blast radius for explosive barrels. */
+  explosionRadius?: number;
   movingConfig?: {
     axis: 'x' | 'y';
     min: number;
@@ -157,6 +201,9 @@ export interface Obstacle {
   rollingConfig?: RollingBoulderConfig;
   fallingConfig?: FallingWeightConfig;
   trapdoorConfig?: TrapdoorConfig;
+  crateConfig?: CrateConfig;
+  plankConfig?: PlankConfig;
+  trapConfig?: TrapConfig;
   bouncerSquash?: number;
   targetSwitchId?: string;
   label?: string; // e.g. "CALE", "SOUTÈNEMENT", "LOQUET"
@@ -196,7 +243,7 @@ export interface LevelConfig {
   name: string;
   subtitle: string;
   description: string;
-  puzzleHint: string; // Clear clue explaining the indirect causal chain!
+  puzzleHint: string;
   ammoCount: number;
   playerPos: Vector2D;
   playerAimHintAngle?: number;
